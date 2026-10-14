@@ -524,6 +524,7 @@ end
 
 local function keyBox(page, key, x, y, transp)
 	local keyName = (typeof(Loaded.settings[key]) == "string" and Loaded.settings[key]) or DefaultKeys[key] or "None"
+	if keyName == "Unknown" then keyName = "None" end
 	Settings[key] = keyName
 	local b = Instance.new("TextButton")
 	b.Position = UDim2.fromOffset(x, y)
@@ -553,7 +554,7 @@ local function keyBox(page, key, x, y, transp)
 		local conn
 		conn = connect(UIS.InputBegan, function(i)
 			if i.UserInputType == Enum.UserInputType.Keyboard then
-				local newName = (i.KeyCode == Enum.KeyCode.Backspace) and "None" or i.KeyCode.Name
+				local newName = (i.KeyCode == Enum.KeyCode.Backspace or i.KeyCode == Enum.KeyCode.Unknown) and "None" or i.KeyCode.Name
 				Settings[key] = newName
 				b.Text = newName
 				onChanged(key, newName)
@@ -1066,9 +1067,105 @@ local function openPicker(key, title)
 	refreshPicker()
 end
 
+local SelectAimTarget
+local AimOn, AimTeamCheck, AimPredict = false, false, false
+local AimPart = "Head"
+local AimSmooth = 0.5
+local AimTarget = nil
+local AIM_MAX = 1000
+
+local function GetAimPart(player)
+	local char = player.Character
+	if not char then return nil end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 then return nil end
+	if AimPart == "Head" then
+		return char:FindFirstChild("Head")
+	end
+	return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+end
+
+local function AimPosition(part, dist)
+	local pos = part.Position
+	if AimPredict then
+		local root = part.Parent and part.Parent:FindFirstChild("HumanoidRootPart")
+		if root then
+			pos = pos + root.AssemblyLinearVelocity * (0.08 + dist * 0.0006)
+		end
+	end
+	return pos
+end
+
+SelectAimTarget = function()
+	if not AimOn then return end
+	if AimTarget then
+		AimTarget = nil
+		return
+	end
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+	local mouse = UIS:GetMouseLocation()
+	local best, bestDist = nil, math.huge
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			local part = GetAimPart(player)
+			if part then
+				local _, same = GetRelation(player)
+				if not (AimTeamCheck and same) then
+					local dist = (part.Position - cam.CFrame.Position).Magnitude
+					if dist <= AIM_MAX then
+						local v = cam:WorldToViewportPoint(part.Position)
+						if v.Z > 0 then
+							local d = (Vector2.new(v.X, v.Y) - mouse).Magnitude
+							if d < bestDist then
+								best, bestDist = player, d
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	AimTarget = best
+end
+
+RunService:BindToRenderStep("HubAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
+	if not AimOn or not AimTarget then return end
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+	local part = GetAimPart(AimTarget)
+	if not part then
+		AimTarget = nil
+		return
+	end
+	if AimTeamCheck then
+		local _, same = GetRelation(AimTarget)
+		if same then
+			AimTarget = nil
+			return
+		end
+	end
+	local origin = cam.CFrame.Position
+	local dist = (part.Position - origin).Magnitude
+	local goal = CFrame.lookAt(origin, AimPosition(part, dist))
+	local alpha = 1 - math.exp(-(60 - 56 * AimSmooth) * dt)
+	cam.CFrame = cam.CFrame:Lerp(goal, alpha)
+end)
+
 do
 	local p = pages["COMBAT"]
-
+	lbl(p, "Aimbot", 21, 157, 160, 33)
+	keyBox(p, "aimbot_key", 179, 153)
+	toggle(p, "aimbot", 320, 153, 75)
+	lbl(p, "Body Part", 21, 210, 220, 33)
+	selector(p, "aimBodyPart", 279, 212, { "Head", "Body" })
+	lbl(p, "Team Check", 21, 263, 240, 33)
+	toggle(p, "aimTeamCheck", 320, 259, 75)
+	lbl(p, "Prediction", 21, 316, 200, 33)
+	toggle(p, "aimPrediction", 320, 312, 75)
+	lbl(p, "Smoothness", 21, 369, 200, 33, C.gray)
+	slider(p, "aimSmooth", 20, 418, 0.5)
+	lbl(p, "Press the aimbot key to lock / unlock a target", 21, 440, 400, 22, C.gray)
 end
 
 do
@@ -1140,6 +1237,8 @@ do
 		end
 		table.clear(Connections)
 		pcall(function() ContextActionService:UnbindAction("HubMenuWheelSink") end)
+		pcall(function() RunService:UnbindFromRenderStep("HubAim") end)
+		AimTarget = nil
 		table.clear(ToggleControls)
 		table.clear(Settings)
 		gui:Destroy()
@@ -1214,6 +1313,13 @@ onChanged = function(name, value)
 	elseif name == "tracerEsp" then TracerOn = value
 	elseif name == "espTeamCheck" then TeamCheckOn = value
 	elseif name == "maxDistance" then ESPMaxDist = math.floor(100 + value * 1900 + 0.5)
+	elseif name == "aimbot" then
+		AimOn = value
+		if not value then AimTarget = nil end
+	elseif name == "aimBodyPart" then AimPart = value
+	elseif name == "aimTeamCheck" then AimTeamCheck = value
+	elseif name == "aimPrediction" then AimPredict = value
+	elseif name == "aimSmooth" then AimSmooth = value
 	end
 	baseOnChanged(name, value)
 	DebouncedSave()
@@ -1240,12 +1346,16 @@ end)
 
 connect(UIS.InputBegan, function(input, processed)
 	if processed then return end
+	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+	local name = input.KeyCode.Name
+	if name == "Unknown" or name == "None" then return end
 	if input.KeyCode == OPEN_KEY then
 		gui.Enabled = not gui.Enabled
 		return
 	end
+	if Settings.aimbot_key == name then SelectAimTarget() end
 	for keyId, toggleId in pairs(KeyToToggle) do
-		if input.KeyCode.Name == Settings[keyId] then
+		if Settings[keyId] == name then
 			if ToggleControls[toggleId] then ToggleControls[toggleId].toggle() end
 		end
 	end
