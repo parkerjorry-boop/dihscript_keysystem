@@ -671,6 +671,7 @@ end
 local ESPOn, BoxOn, ChamsOn, NameOn, HealthOn, TracerOn, TeamCheckOn =
 	false, false, false, false, false, false, false
 local ESPMaxDist = 800
+local SCPOn, ShowIDOn = false, false
 
 local ESPColors = {
 	enemy = Color3.fromRGB(255, 60, 60),
@@ -705,48 +706,46 @@ local function DebouncedSave()
 	saveThread = task.delay(0.4, SaveConfig)
 end
 
-local NeutralTeamIDs = {
-	[""] = true,
-	["anomalylockdown"] = true,
-	["neutral"] = true,
-	["none"] = true,
-	["noteam"] = true,
-}
+local NeutralExact = { [""] = true, ["none"] = true, ["noteam"] = true }
+local NeutralContains = { "anomalylockdown", "neutral", "spectat", "lobby" }
 
-local function RealTeamID(player)
+local function IDOf(player)
 	local v = player:GetAttribute("TeamID")
-	if typeof(v) == "string" then
-		local norm = (v:lower():gsub("[^%w]", ""))
-		if NeutralTeamIDs[norm] then return nil end
-		return v
-	elseif typeof(v) == "number" then
-		return v
+	if v == nil and player.Character then
+		v = player.Character:GetAttribute("TeamID")
 	end
+	return v
+end
+
+local function NormID(v)
+	if typeof(v) == "string" then return (v:lower():gsub("[^%w]", "")) end
+	if typeof(v) == "number" then return tostring(v) end
 	return nil
 end
 
-local function IsSCP(name)
-	if typeof(name) ~= "string" then return false end
-	local norm = (name:lower():gsub("[^%w]", ""))
-	return norm:find("scp", 1, true) ~= nil
+local function RealTeamID(player)
+	local n = NormID(IDOf(player))
+	if not n or NeutralExact[n] then return nil end
+	for _, word in ipairs(NeutralContains) do
+		if n:find(word, 1, true) then return nil end
+	end
+	return n
 end
 
 local function GetRelation(player)
-
-	if LocalPlayer:GetAttribute("TeamID") ~= nil or player:GetAttribute("TeamID") ~= nil then
+	if IDOf(LocalPlayer) ~= nil or IDOf(player) ~= nil then
 		local theirID = RealTeamID(player)
 		if not theirID then return "neutral", false end
 		local myID = RealTeamID(LocalPlayer)
 		local same = myID ~= nil and myID == theirID
-		if IsSCP(theirID) then return "scp", same end
+		if theirID:find("scp", 1, true) then return "scp", same end
 		if same then return "team", true end
 		return "enemy", false
 	end
-
 	local myTeam, theirTeam = LocalPlayer.Team, player.Team
 	if not myTeam or not theirTeam or LocalPlayer.Neutral or player.Neutral then return "neutral", false end
 	local same = myTeam == theirTeam
-	if IsSCP(theirTeam.Name) then return "scp", same end
+	if NormID(theirTeam.Name):find("scp", 1, true) then return "scp", same end
 	if same then return "team", true end
 	return "enemy", false
 end
@@ -781,7 +780,7 @@ local function newEntry(player)
 
 	e.name = Instance.new("TextLabel")
 	e.name.BackgroundTransparency = 1
-	e.name.Size = UDim2.fromOffset(200, 16)
+	e.name.Size = UDim2.fromOffset(340, 16)
 	e.name.AnchorPoint = Vector2.new(0.5, 1)
 	e.name.Font = Enum.Font.GothamBold
 	e.name.TextSize = 13
@@ -865,7 +864,7 @@ local function updateESP()
 			local root = char and char:FindFirstChild("HumanoidRootPart")
 			local rel, same = GetRelation(player)
 
-			if not (hum and root) or hum.Health <= 0 or (TeamCheckOn and same) then
+			if not (hum and root) or hum.Health <= 0 or (TeamCheckOn and same) or (rel == "scp" and not SCPOn) then
 				hideEntry(e)
 			else
 				local dist = (root.Position - origin).Magnitude
@@ -882,7 +881,7 @@ local function updateESP()
 
 					local boxOk = false
 					local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
-					if BoxOn or NameOn or HealthOn then
+					if BoxOn or NameOn or HealthOn or ShowIDOn then
 						local cf, size = char:GetBoundingBox()
 						boxOk = true
 						for _, sx in ipairs(SIGNS) do
@@ -913,8 +912,15 @@ local function updateESP()
 						e.box.Visible = false
 					end
 
-					if boxOk and NameOn then
-						e.name.Text = string.format("%s [%d]", player.DisplayName, math.floor(dist))
+					if boxOk and (NameOn or ShowIDOn) then
+						local label = ""
+						if NameOn then
+							label = string.format("%s [%d]", player.DisplayName, math.floor(dist))
+						end
+						if ShowIDOn then
+							label = label .. " {" .. tostring(IDOf(player)) .. " | " .. rel .. "}"
+						end
+						e.name.Text = label
 						e.name.TextColor3 = color
 						e.name.Position = UDim2.fromOffset(minX + w / 2, minY - 2)
 						e.name.Visible = true
@@ -1071,8 +1077,39 @@ local SelectAimTarget
 local AimOn, AimTeamCheck, AimPredict = false, false, false
 local AimPart = "Head"
 local AimSmooth = 0.5
+local AimPredStrength = 1
 local AimTarget = nil
+local aimRot = nil
 local AIM_MAX = 1000
+
+local aimStatus = Instance.new("TextLabel")
+aimStatus.BackgroundTransparency = 1
+aimStatus.AnchorPoint = Vector2.new(0.5, 0)
+aimStatus.Position = UDim2.new(0.5, 0, 0, 56)
+aimStatus.Size = UDim2.fromOffset(320, 24)
+aimStatus.Font = Enum.Font.GothamBold
+aimStatus.TextSize = 16
+aimStatus.TextColor3 = C.white
+aimStatus.TextStrokeTransparency = 0.4
+aimStatus.Visible = false
+aimStatus.Parent = espGui
+
+local statusToken = 0
+local function setStatus(msg, seconds)
+	statusToken += 1
+	local token = statusToken
+	if not msg then
+		aimStatus.Visible = false
+		return
+	end
+	aimStatus.Text = msg
+	aimStatus.Visible = true
+	if seconds then
+		task.delay(seconds, function()
+			if statusToken == token then aimStatus.Visible = false end
+		end)
+	end
+end
 
 local function GetAimPart(player)
 	local char = player.Character
@@ -1090,21 +1127,26 @@ local function AimPosition(part, dist)
 	if AimPredict then
 		local root = part.Parent and part.Parent:FindFirstChild("HumanoidRootPart")
 		if root then
-			pos = pos + root.AssemblyLinearVelocity * (0.08 + dist * 0.0006)
+			pos = pos + root.AssemblyLinearVelocity * (0.08 + dist * 0.0006) * AimPredStrength
 		end
 	end
 	return pos
 end
 
 SelectAimTarget = function()
-	if not AimOn then return end
+	if not AimOn then
+		setStatus("Turn Aimbot on first", 1.5)
+		return
+	end
 	if AimTarget then
 		AimTarget = nil
+		aimRot = nil
+		setStatus("Aimbot unlocked", 1)
 		return
 	end
 	local cam = workspace.CurrentCamera
 	if not cam then return end
-	local mouse = UIS:GetMouseLocation()
+	local vp = cam.ViewportSize
 	local best, bestDist = nil, math.huge
 	for _, player in ipairs(Players:GetPlayers()) do
 		if player ~= LocalPlayer then
@@ -1113,13 +1155,10 @@ SelectAimTarget = function()
 				local _, same = GetRelation(player)
 				if not (AimTeamCheck and same) then
 					local dist = (part.Position - cam.CFrame.Position).Magnitude
-					if dist <= AIM_MAX then
+					if dist <= AIM_MAX and dist < bestDist then
 						local v = cam:WorldToViewportPoint(part.Position)
-						if v.Z > 0 then
-							local d = (Vector2.new(v.X, v.Y) - mouse).Magnitude
-							if d < bestDist then
-								best, bestDist = player, d
-							end
+						if v.Z > 0 and v.X >= 0 and v.X <= vp.X and v.Y >= 0 and v.Y <= vp.Y then
+							best, bestDist = player, dist
 						end
 					end
 				end
@@ -1127,29 +1166,45 @@ SelectAimTarget = function()
 		end
 	end
 	AimTarget = best
+	aimRot = nil
+	if best then
+		setStatus("Locked: " .. best.DisplayName)
+	else
+		setStatus("No target found", 1.2)
+	end
 end
 
-RunService:BindToRenderStep("HubAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
-	if not AimOn or not AimTarget then return end
+RunService:BindToRenderStep("HubAim", Enum.RenderPriority.Last.Value, function(dt)
+	if not AimOn or not AimTarget then
+		aimRot = nil
+		return
+	end
 	local cam = workspace.CurrentCamera
 	if not cam then return end
 	local part = GetAimPart(AimTarget)
 	if not part then
 		AimTarget = nil
+		aimRot = nil
+		setStatus("Target lost", 1.2)
 		return
 	end
 	if AimTeamCheck then
 		local _, same = GetRelation(AimTarget)
 		if same then
 			AimTarget = nil
+			aimRot = nil
+			setStatus(nil)
 			return
 		end
 	end
-	local origin = cam.CFrame.Position
-	local dist = (part.Position - origin).Magnitude
-	local goal = CFrame.lookAt(origin, AimPosition(part, dist))
+	local pos = cam.CFrame.Position
+	local dist = (part.Position - pos).Magnitude
+	if dist < 0.5 then return end
+	local goal = CFrame.lookAt(pos, AimPosition(part, dist)).Rotation
+	aimRot = aimRot or cam.CFrame.Rotation
 	local alpha = 1 - math.exp(-(60 - 56 * AimSmooth) * dt)
-	cam.CFrame = cam.CFrame:Lerp(goal, alpha)
+	aimRot = aimRot:Lerp(goal, alpha)
+	cam.CFrame = CFrame.new(pos) * aimRot
 end)
 
 do
@@ -1163,9 +1218,11 @@ do
 	toggle(p, "aimTeamCheck", 320, 259, 75)
 	lbl(p, "Prediction", 21, 316, 200, 33)
 	toggle(p, "aimPrediction", 320, 312, 75)
-	lbl(p, "Smoothness", 21, 369, 200, 33, C.gray)
-	slider(p, "aimSmooth", 20, 418, 0.5)
-	lbl(p, "Press the aimbot key to lock / unlock a target", 21, 440, 400, 22, C.gray)
+	lbl(p, "Prediction Strength", 21, 369, 350, 33, C.gray)
+	slider(p, "aimPredStrength", 20, 418, 0.33)
+	lbl(p, "Smoothness", 21, 440, 200, 33, C.gray)
+	slider(p, "aimSmooth", 20, 489, 0.5)
+	lbl(p, "Press the aimbot key to lock / unlock a target", 21, 511, 400, 22, C.gray)
 end
 
 do
@@ -1185,8 +1242,12 @@ do
 	toggle(p, "tracerEsp", 320, 418, 75)
 	lbl(p, "Team Check", 21, 475, 240, 33)
 	toggle(p, "espTeamCheck", 320, 471, 75)
-	lbl(p, "max distance", 21, 528, 250, 28, C.gray)
-	slider(p, "maxDistance", 20, 577, 0.37)
+	lbl(p, "SCP ESP", 21, 528, 240, 33)
+	toggle(p, "scpEsp", 320, 524, 75)
+	lbl(p, "Show Team ID", 21, 581, 260, 33)
+	toggle(p, "showTeamId", 320, 577, 75)
+	lbl(p, "max distance", 21, 634, 250, 28, C.gray)
+	slider(p, "maxDistance", 20, 683, 0.37)
 
 end
 
@@ -1279,7 +1340,7 @@ do
 	corner(dbg, 10)
 	dbg.MouseButton1Click:Connect(function()
 		for _, pl in ipairs(Players:GetPlayers()) do
-			print("[TeamID]", pl.Name, "|", tostring(pl:GetAttribute("TeamID")), "|", GetRelation(pl))
+			print("[TeamID]", pl.Name, "|", tostring(IDOf(pl)), "|", GetRelation(pl))
 		end
 	end)
 
@@ -1315,11 +1376,17 @@ onChanged = function(name, value)
 	elseif name == "maxDistance" then ESPMaxDist = math.floor(100 + value * 1900 + 0.5)
 	elseif name == "aimbot" then
 		AimOn = value
-		if not value then AimTarget = nil end
+		if not value then
+			AimTarget = nil
+			setStatus(nil)
+		end
 	elseif name == "aimBodyPart" then AimPart = value
 	elseif name == "aimTeamCheck" then AimTeamCheck = value
 	elseif name == "aimPrediction" then AimPredict = value
 	elseif name == "aimSmooth" then AimSmooth = value
+	elseif name == "scpEsp" then SCPOn = value
+	elseif name == "showTeamId" then ShowIDOn = value
+	elseif name == "aimPredStrength" then AimPredStrength = value * 3
 	end
 	baseOnChanged(name, value)
 	DebouncedSave()
@@ -1344,8 +1411,8 @@ connect(UIS.InputEnded, function(i)
 	if isPress(i) then dragStart = nil end
 end)
 
-connect(UIS.InputBegan, function(input, processed)
-	if processed then return end
+connect(UIS.InputBegan, function(input)
+	if UIS:GetFocusedTextBox() then return end
 	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 	local name = input.KeyCode.Name
 	if name == "Unknown" or name == "None" then return end
