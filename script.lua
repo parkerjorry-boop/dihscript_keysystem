@@ -35,7 +35,6 @@ end
 
 print(ProtectionConfig.HubName .. " Loaded Successfully!")
 
-
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -56,6 +55,12 @@ end
 local HubScale = 1
 local Settings, ToggleControls = {}, {}
 local destroyed = false
+
+local Resetters = {}
+local function addReset(page, fn)
+	Resetters[page] = Resetters[page] or {}
+	table.insert(Resetters[page], fn)
+end
 
 local CONFIG_FILE = "AnomalyLockdownConfig.json"
 local Loaded = { settings = {}, colors = {} }
@@ -165,264 +170,6 @@ local function text(parent, str, font, size, x, y, w, h, color)
 	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 	s.Parent = l
 	return l
-end
-
-local GET_KEY_URL = "https://work.ink/32lJ/DIHSCRIPTS"
-local DISCORD_URL = "https://discord.gg/PKaSBmk7q"
-
-local VALID_KEY = "DIHSCRIPT819273186481948100"
-local KEY_FILE = "HubKey.txt"
-
-local function KeyAlreadySaved()
-	if not (isfile and readfile) then return false end
-	local ok, data = pcall(function()
-		if isfile(KEY_FILE) then return readfile(KEY_FILE) end
-		return nil
-	end)
-	return ok and typeof(data) == "string" and (data:gsub("%s+", "")) == VALID_KEY
-end
-
-local function SaveKey()
-	if writefile then pcall(writefile, KEY_FILE, VALID_KEY) end
-end
-
-local function TrySubmit(key)
-	if typeof(key) == "string" and (key:gsub("%s+", "")) == VALID_KEY then
-		SaveKey()
-		return "ok"
-	end
-	return "invalid"
-end
-
-local function OpenOrCopy(url)
-	local done = false
-	if setclipboard then done = pcall(setclipboard, url) or done end
-	if typeof(open_url) == "function" then
-		done = pcall(open_url, url) or done
-	elseif typeof(openurl) == "function" then
-		done = pcall(openurl, url) or done
-	end
-	return done
-end
-
-if not KeyAlreadySaved() then
-	local KeyGui = Instance.new("ScreenGui")
-	KeyGui.Name = "HubKeyGate"
-	KeyGui.ResetOnSpawn = false
-	KeyGui.IgnoreGuiInset = true
-	KeyGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	KeyGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-	local Overlay = Instance.new("Frame")
-	Overlay.Size = UDim2.fromScale(1, 1)
-	Overlay.BackgroundColor3 = Color3.new(0, 0, 0)
-	Overlay.BackgroundTransparency = 0.4
-	Overlay.BorderSizePixel = 0
-	Overlay.Parent = KeyGui
-
-	local gateShadow = Instance.new("Frame")
-	gateShadow.Size = UDim2.fromOffset(340, 300)
-	gateShadow.Position = UDim2.fromScale(0.5, 0.5)
-	gateShadow.AnchorPoint = Vector2.new(0.5, 0.5)
-	gateShadow.BackgroundTransparency = 1
-	gateShadow.ZIndex = 0
-	gateShadow.Parent = KeyGui
-
-	for i = 1, 6 do
-		local grow = (i - 1) * 2
-		local ring = Instance.new("Frame")
-		ring.Position = UDim2.fromOffset(-grow, 3 - grow)
-		ring.Size = UDim2.fromOffset(340 + grow * 2, 300 + grow * 2)
-		ring.BackgroundTransparency = 1
-		ring.BorderSizePixel = 0
-		ring.Parent = gateShadow
-		corner(ring, 22 + grow)
-		stroke(ring, 2, C.black, 0.82 + i * 0.025)
-	end
-
-	local Card = Instance.new("Frame")
-	Card.Size = UDim2.fromOffset(340, 300)
-	Card.Position = UDim2.fromScale(0.5, 0.5)
-	Card.AnchorPoint = Vector2.new(0.5, 0.5)
-	Card.BackgroundColor3 = C.white
-	Card.BackgroundTransparency = 0.12
-	Card.BorderSizePixel = 0
-	Card.ZIndex = 1
-	Card.Parent = KeyGui
-	corner(Card, 22)
-
-	local gateGrad = Instance.new("UIGradient")
-	gateGrad.Rotation = 90
-	gateGrad.Color = WINDOW_GRADIENT
-	gateGrad.Parent = Card
-
-	local gateBorder = stroke(Card, 5, C.white, 0.08)
-	local gateBorderGrad = Instance.new("UIGradient")
-	gateBorderGrad.Rotation = 90
-	gateBorderGrad.Color = ColorSequence.new(C.borderA, C.borderB)
-	gateBorderGrad.Parent = gateBorder
-
-	local gateTitleBar = frame(Card, 12, 10, 316, 44, C.titleBar, 0, 14)
-	local gateTitle = Instance.new("TextLabel")
-	gateTitle.BackgroundTransparency = 1
-	gateTitle.Size = UDim2.fromScale(1, 1)
-	gateTitle.FontFace = LUCKY
-	gateTitle.TextSize = 26
-	gateTitle.Text = "ANOMALY LOCKDOWN"
-	gateTitle.TextColor3 = C.white
-	gateTitle.Parent = gateTitleBar
-	local gts = Instance.new("UIStroke")
-	gts.Thickness = 1.5
-	gts.Color = C.black
-	gts.Transparency = 0.35
-	gts.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-	gts.Parent = gateTitle
-
-	local sub = Instance.new("TextLabel")
-	sub.BackgroundTransparency = 1
-	sub.Position = UDim2.fromOffset(0, 60)
-	sub.Size = UDim2.new(1, 0, 0, 20)
-	sub.FontFace = FREDOKA
-	sub.TextSize = 16
-	sub.Text = "Enter key to unlock"
-	sub.TextColor3 = C.black
-	sub.TextTransparency = 0.35
-	sub.Parent = Card
-
-	local BoxBg = frame(Card, 20, 90, 300, 40, C.black, 0.75, 10)
-	BoxBg.Size = UDim2.new(1, -40, 0, 40)
-	local boxStroke = Instance.new("UIStroke")
-	boxStroke.Thickness = 1.5
-	boxStroke.Color = C.black
-	boxStroke.Transparency = 0.4
-	boxStroke.Parent = BoxBg
-
-	local KeyBox = Instance.new("TextBox")
-	KeyBox.Size = UDim2.new(1, -16, 1, 0)
-	KeyBox.Position = UDim2.fromOffset(8, 0)
-	KeyBox.BackgroundTransparency = 1
-	KeyBox.FontFace = FREDOKA
-	KeyBox.TextSize = 18
-	KeyBox.TextColor3 = C.white
-	KeyBox.PlaceholderText = "Paste key..."
-	KeyBox.PlaceholderColor3 = C.gray
-	KeyBox.Text = ""
-	KeyBox.ClearTextOnFocus = false
-	KeyBox.TextXAlignment = Enum.TextXAlignment.Left
-	KeyBox.Parent = BoxBg
-
-	local StatusLbl = Instance.new("TextLabel")
-	StatusLbl.BackgroundTransparency = 1
-	StatusLbl.Position = UDim2.fromOffset(20, 134)
-	StatusLbl.Size = UDim2.new(1, -40, 0, 18)
-	StatusLbl.FontFace = FREDOKA
-	StatusLbl.TextSize = 14
-	StatusLbl.TextColor3 = C.black
-	StatusLbl.TextTransparency = 0.4
-	StatusLbl.Text = ""
-	StatusLbl.Parent = Card
-
-	local function MakeBtn(label, y, textColor, bgColor, callback)
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(1, -40, 0, 36)
-		btn.Position = UDim2.fromOffset(20, y)
-		btn.BackgroundColor3 = bgColor
-		btn.BackgroundTransparency = 0.15
-		btn.AutoButtonColor = false
-		btn.Text = label
-		btn.FontFace = FREDOKA
-		btn.TextSize = 18
-		btn.TextColor3 = textColor
-		btn.Parent = Card
-		corner(btn, 10)
-		local bs = Instance.new("UIStroke")
-		bs.Thickness = 1.5
-		bs.Color = C.black
-		bs.Transparency = 0.4
-		bs.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-		bs.Parent = btn
-		btn.MouseEnter:Connect(function()
-			TweenService:Create(btn, TweenInfo.new(0.12), {
-				BackgroundTransparency = 0.05,
-				Size = UDim2.new(1, -36, 0, 38),
-				Position = UDim2.fromOffset(18, y - 1),
-			}):Play()
-		end)
-		btn.MouseLeave:Connect(function()
-			TweenService:Create(btn, TweenInfo.new(0.12), {
-				BackgroundTransparency = 0.15,
-				Size = UDim2.new(1, -40, 0, 36),
-				Position = UDim2.fromOffset(20, y),
-			}):Play()
-		end)
-		btn.MouseButton1Click:Connect(function()
-			TweenService:Create(btn, TweenInfo.new(0.06), { Size = UDim2.new(1, -48, 0, 32) }):Play()
-			task.delay(0.06, function()
-				TweenService:Create(btn, TweenInfo.new(0.12, Enum.EasingStyle.Back), {
-					Size = UDim2.new(1, -40, 0, 36),
-				}):Play()
-			end)
-			callback()
-		end)
-		return btn
-	end
-
-	local unlockEvent = Instance.new("BindableEvent")
-	local finished = false
-	local function Finish()
-		if finished then return end
-		finished = true
-		KeyGui:Destroy()
-		unlockEvent:Fire()
-	end
-
-	local busy = false
-	MakeBtn("Unlock", 158, C.white, C.titleBar, function()
-		if busy then return end
-		busy = true
-		StatusLbl.TextColor3 = C.titleBar
-		StatusLbl.TextTransparency = 0
-		StatusLbl.Text = "Checking..."
-		local result = TrySubmit(KeyBox.Text or "")
-		if result == "ok" then
-			StatusLbl.TextColor3 = C.success
-			StatusLbl.Text = "Key accepted!"
-			task.wait(0.3)
-			Finish()
-			return
-		end
-		StatusLbl.TextColor3 = C.danger
-		if result == "throttled" then
-			StatusLbl.Text = "Too fast, wait a second"
-		elseif result == "noserver" then
-			StatusLbl.Text = "Key server not found"
-		elseif result == "error" then
-			StatusLbl.Text = "Server error, try again"
-		else
-			StatusLbl.Text = "Invalid key"
-		end
-		TweenService:Create(Card, TweenInfo.new(0.05), { Position = UDim2.new(0.5, 8, 0.5, 0) }):Play()
-		task.wait(0.05)
-		TweenService:Create(Card, TweenInfo.new(0.05), { Position = UDim2.new(0.5, -8, 0.5, 0) }):Play()
-		task.wait(0.05)
-		TweenService:Create(Card, TweenInfo.new(0.05), { Position = UDim2.fromScale(0.5, 0.5) }):Play()
-		busy = false
-	end)
-
-	MakeBtn("Get Key", 202, C.white, C.fill, function()
-		StatusLbl.TextColor3 = C.titleBar
-		StatusLbl.TextTransparency = 0
-
-		StatusLbl.Text = OpenOrCopy(GET_KEY_URL) and "Link copied!" or GET_KEY_URL
-	end)
-
-	MakeBtn("Join Discord", 246, C.white, C.discord, function()
-		StatusLbl.TextColor3 = C.discord
-		StatusLbl.TextTransparency = 0
-		StatusLbl.Text = OpenOrCopy(DISCORD_URL) and "Discord link copied!" or DISCORD_URL
-	end)
-
-	if not finished then unlockEvent.Event:Wait() end
 end
 
 local gui = Instance.new("ScreenGui")
@@ -644,6 +391,32 @@ for _, d in ipairs(tabDefs) do
 	pages[name] = page
 end
 
+local resetBtn = Instance.new("TextButton")
+resetBtn.Position = UDim2.fromOffset(309, 14)
+resetBtn.Size = UDim2.fromOffset(72, 36)
+resetBtn.BackgroundColor3 = Color3.fromRGB(110, 70, 130)
+resetBtn.AutoButtonColor = false
+resetBtn.Text = "RESET"
+resetBtn.FontFace = LUCKY
+resetBtn.TextSize = 20
+resetBtn.TextColor3 = C.white
+resetBtn.Parent = main
+corner(resetBtn, 8)
+stroke(resetBtn, 2, C.black, 0)
+local resetStroke = Instance.new("UIStroke")
+resetStroke.Thickness = 1.5
+resetStroke.Color = C.black
+resetStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+resetStroke.Parent = resetBtn
+resetBtn.MouseButton1Click:Connect(function()
+	local pk = main:FindFirstChild("ColorPicker")
+	if pk then pk.Visible = false end
+	local list = Resetters[pages[activeTab]]
+	if list then
+		for _, fn in ipairs(list) do pcall(fn) end
+	end
+end)
+
 local TRACK_Y, TRACK_H, THUMB_H = 132, 450, 320
 local MAX_SCROLL = 270
 local scrollA, targetA, shownA = 0, 0, 0
@@ -740,6 +513,7 @@ local function toggle(page, key, x, y, w)
 		set = function(state) apply(state, true) end,
 		toggle = function() apply(not Settings[key], true) end,
 	}
+	addReset(page, function() apply(false, true) end)
 	local saved = Loaded.settings[key]
 	if typeof(saved) == "boolean" then
 		task.defer(function()
@@ -769,6 +543,11 @@ local function keyBox(page, key, x, y, transp)
 	s.Color = C.black
 	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 	s.Parent = b
+	addReset(page, function()
+		Settings[key] = "None"
+		b.Text = "None"
+		onChanged(key, "None")
+	end)
 	b.MouseButton1Click:Connect(function()
 		b.Text = "..."
 		local conn
@@ -810,6 +589,11 @@ local function selector(page, key, x, y, options)
 	s.Color = C.black
 	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 	s.Parent = b
+	addReset(page, function()
+		Settings[key] = options[1]
+		b.Text = options[1]
+		onChanged(key, options[1])
+	end)
 	b.MouseButton1Click:Connect(function()
 		local i = table.find(options, Settings[key]) or 1
 		Settings[key] = options[i % #options + 1]
@@ -820,6 +604,7 @@ end
 
 local function slider(page, key, x, y, defaultA)
 	defaultA = defaultA or 0.35
+	local origA = defaultA
 	local savedA = Loaded.settings[key]
 	if typeof(savedA) == "number" then
 		defaultA = math.clamp(savedA, 0, 1)
@@ -869,6 +654,13 @@ local function slider(page, key, x, y, defaultA)
 			setFromX(i.Position.X)
 		end
 	end)
+	addReset(page, function()
+		local kx = 9 + origA * math.max(bar.AbsoluteSize.X - 18, 1)
+		knob.Position = UDim2.new(0, kx, 0.5, 0)
+		fill.Size = UDim2.fromOffset(math.max(kx, 9), 10)
+		Settings[key] = origA
+		onChanged(key, origA)
+	end)
 end
 
 local function lbl(page, str, x, y, w, size, color)
@@ -885,6 +677,9 @@ local ESPColors = {
 	neutral = Color3.fromRGB(255, 255, 255),
 	scp = Color3.fromRGB(255, 170, 0),
 }
+
+local DefaultColors = {}
+for k, v in pairs(ESPColors) do DefaultColors[k] = v end
 
 for k, v in pairs(Loaded.colors) do
 	if ESPColors[k] and typeof(v) == "table" and typeof(v[1]) == "number" and typeof(v[2]) == "number" and typeof(v[3]) == "number" then
@@ -1318,6 +1113,13 @@ do
 	colorRow("team", "Team color", 210)
 	colorRow("neutral", "Neutral color", 263)
 	colorRow("scp", "SCP color", 316)
+	addReset(p, function()
+		for k, c in pairs(DefaultColors) do
+			ESPColors[k] = c
+			if swatches[k] then swatches[k].BackgroundColor3 = c end
+		end
+		DebouncedSave()
+	end)
 	lbl(p, "Click a color to change it", 21, 372, 400, 22, C.gray)
 end
 
