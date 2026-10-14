@@ -88,7 +88,13 @@ local function connect(signal, fn)
 end
 
 local DefaultKeys = {}
-local KeyToToggle = { esp_key = "esp" }
+local KeyToToggle = {
+	esp_key = "esp",
+	fly_key = "fly",
+	noclip_key = "noclip",
+	walk_key = "walkspeed",
+	jump_key = "jumppower",
+}
 local OPEN_KEY = Enum.KeyCode.RightShift
 
 local C = {
@@ -283,10 +289,11 @@ viewport.ClipsDescendants = true
 viewport.Parent = main
 
 local tabDefs = {
-	{ "COMBAT", 13, 81, 100, 38, 15, 98, 35, 2.0 },
-	{ "ESP", 118, 81, 75, 38, 15, 72, 35, -1.5 },
-	{ "COLORS", 198, 81, 100, 38, 14, 96, 35, 1.2 },
-	{ "SETTINGS", 305, 81, 110, 38, 14, 104, 35, -0.8 },
+	{ "COMBAT", 13, 81, 80, 38, 13, 78, 35, 2.0 },
+	{ "MOVEMENT", 97, 81, 96, 38, 12, 94, 35, -1.5 },
+	{ "ESP", 197, 81, 52, 38, 13, 50, 35, 1.2 },
+	{ "COLORS", 253, 81, 76, 38, 13, 74, 35, -1.0 },
+	{ "SETTINGS", 333, 81, 88, 38, 12, 86, 35, 1.5 },
 }
 
 local setScroll
@@ -1092,7 +1099,14 @@ aimStatus.TextSize = 16
 aimStatus.TextColor3 = C.white
 aimStatus.TextStrokeTransparency = 0.4
 aimStatus.Visible = false
-aimStatus.Parent = espGui
+local aimGui = Instance.new("ScreenGui")
+aimGui.Name = "HubStatus"
+aimGui.ResetOnSpawn = false
+aimGui.IgnoreGuiInset = true
+aimGui.DisplayOrder = 100
+aimGui.OnTopOfCoreBlur = true
+aimGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+aimStatus.Parent = aimGui
 
 local statusToken = 0
 local function setStatus(msg, seconds)
@@ -1200,11 +1214,133 @@ RunService:BindToRenderStep("HubAim", Enum.RenderPriority.Last.Value, function(d
 	local pos = cam.CFrame.Position
 	local dist = (part.Position - pos).Magnitude
 	if dist < 0.5 then return end
-	local goal = CFrame.lookAt(pos, AimPosition(part, dist)).Rotation
-	aimRot = aimRot or cam.CFrame.Rotation
+	local aimAt = AimPosition(part, dist)
 	local alpha = 1 - math.exp(-(60 - 56 * AimSmooth) * dt)
+	if mousemoverel then
+		local sp = cam:WorldToViewportPoint(aimAt)
+		if sp.Z > 0 then
+			local m = UIS:GetMouseLocation()
+			local k = (UIS.MouseBehavior == Enum.MouseBehavior.Default) and 1 or 0.3
+			pcall(mousemoverel, (sp.X - m.X) * alpha * k, (sp.Y - m.Y) * alpha * k)
+		end
+		return
+	end
+	local goal = CFrame.lookAt(pos, aimAt).Rotation
+	aimRot = aimRot or cam.CFrame.Rotation
 	aimRot = aimRot:Lerp(goal, alpha)
 	cam.CFrame = CFrame.new(pos) * aimRot
+end)
+
+local FlyOn, NoclipOn, WalkOn, JumpOn = false, false, false, false
+local FlySpeed, WalkVal, JumpVal = 50, 44, 100
+local FlyBV, NoclipConn
+local savedWalk, savedJumpPower, savedUseJP
+
+local function CharParts()
+	local char = LocalPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	return char, hum, hrp
+end
+
+local function StopFly()
+	if FlyBV then
+		FlyBV:Destroy()
+		FlyBV = nil
+	end
+	local _, hum = CharParts()
+	if hum then hum.PlatformStand = false end
+end
+
+local function StartFly()
+	StopFly()
+	local _, hum, hrp = CharParts()
+	if not hum or not hrp then return end
+	hum.PlatformStand = true
+	FlyBV = Instance.new("BodyVelocity")
+	FlyBV.Name = "HubFly"
+	FlyBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+	FlyBV.Velocity = Vector3.zero
+	FlyBV.Parent = hrp
+end
+
+local function UpdateFly()
+	if not FlyOn or not FlyBV or not FlyBV.Parent then return end
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+	local look, right = cam.CFrame.LookVector, cam.CFrame.RightVector
+	local move = Vector3.zero
+	if UIS:IsKeyDown(Enum.KeyCode.W) then move += look end
+	if UIS:IsKeyDown(Enum.KeyCode.S) then move -= look end
+	if UIS:IsKeyDown(Enum.KeyCode.D) then move += right end
+	if UIS:IsKeyDown(Enum.KeyCode.A) then move -= right end
+	if UIS:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.yAxis end
+	if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
+		move -= Vector3.yAxis
+	end
+	FlyBV.Velocity = move.Magnitude > 0 and move.Unit * FlySpeed or Vector3.zero
+end
+
+local function SetNoclip(state)
+	NoclipOn = state
+	if NoclipConn then
+		NoclipConn:Disconnect()
+		NoclipConn = nil
+	end
+	if state then
+		NoclipConn = connect(RunService.Stepped, function()
+			local char = LocalPlayer.Character
+			if not char then return end
+			for _, p in ipairs(char:GetDescendants()) do
+				if p:IsA("BasePart") then p.CanCollide = false end
+			end
+		end)
+	end
+end
+
+local function SetWalk(state)
+	local _, hum = CharParts()
+	if state and not WalkOn and hum then savedWalk = hum.WalkSpeed end
+	WalkOn = state
+	if not state and hum then hum.WalkSpeed = savedWalk or 16 end
+end
+
+local function SetJump(state)
+	local _, hum = CharParts()
+	if state and not JumpOn and hum then
+		savedJumpPower = hum.JumpPower
+		savedUseJP = hum.UseJumpPower
+	end
+	JumpOn = state
+	if not state and hum then
+		hum.UseJumpPower = savedUseJP ~= false
+		hum.JumpPower = savedJumpPower or 50
+	end
+end
+
+local function StopMovement()
+	FlyOn = false
+	StopFly()
+	SetNoclip(false)
+	SetWalk(false)
+	SetJump(false)
+end
+
+connect(RunService.Heartbeat, function()
+	UpdateFly()
+	if not (WalkOn or JumpOn) then return end
+	local _, hum = CharParts()
+	if not hum then return end
+	if WalkOn then hum.WalkSpeed = WalkVal end
+	if JumpOn then
+		hum.UseJumpPower = true
+		hum.JumpPower = JumpVal
+	end
+end)
+
+connect(LocalPlayer.CharacterAdded, function()
+	task.wait(0.5)
+	if FlyOn then StartFly() end
 end)
 
 do
@@ -1223,6 +1359,28 @@ do
 	lbl(p, "Smoothness", 21, 440, 200, 33, C.gray)
 	slider(p, "aimSmooth", 20, 489, 0.5)
 	lbl(p, "Press the aimbot key to lock / unlock a target", 21, 511, 400, 22, C.gray)
+end
+
+do
+	local p = pages["MOVEMENT"]
+	lbl(p, "Fly", 21, 157, 160, 33)
+	keyBox(p, "fly_key", 215, 153)
+	toggle(p, "fly", 320, 153, 75)
+	lbl(p, "Noclip", 21, 210, 190, 33)
+	keyBox(p, "noclip_key", 215, 206)
+	toggle(p, "noclip", 320, 206, 75)
+	lbl(p, "Speed", 21, 263, 190, 33)
+	keyBox(p, "walk_key", 215, 259)
+	toggle(p, "walkspeed", 320, 259, 75)
+	lbl(p, "Jump", 21, 316, 190, 33)
+	keyBox(p, "jump_key", 215, 312)
+	toggle(p, "jumppower", 320, 312, 75)
+	lbl(p, "Fly Speed", 21, 369, 250, 33, C.gray)
+	slider(p, "flySpeed", 20, 418, 0.21)
+	lbl(p, "Walk Speed", 21, 440, 250, 33, C.gray)
+	slider(p, "walkSpeedVal", 20, 489, 0.15)
+	lbl(p, "Jump Power", 21, 511, 250, 33, C.gray)
+	slider(p, "jumpPowerVal", 20, 560, 0.2)
 end
 
 do
@@ -1293,6 +1451,8 @@ do
 		destroyed = true
 		pcall(onSelfDestruct)
 		pcall(DestroyESP)
+		pcall(StopMovement)
+		pcall(function() aimGui:Destroy() end)
 		for _, c in ipairs(Connections) do
 			pcall(function() c:Disconnect() end)
 		end
@@ -1385,6 +1545,15 @@ onChanged = function(name, value)
 	elseif name == "aimPrediction" then AimPredict = value
 	elseif name == "aimSmooth" then AimSmooth = value
 	elseif name == "scpEsp" then SCPOn = value
+	elseif name == "fly" then
+		FlyOn = value
+		if value then StartFly() else StopFly() end
+	elseif name == "noclip" then SetNoclip(value)
+	elseif name == "walkspeed" then SetWalk(value)
+	elseif name == "jumppower" then SetJump(value)
+	elseif name == "flySpeed" then FlySpeed = math.floor(10 + value * 190 + 0.5)
+	elseif name == "walkSpeedVal" then WalkVal = math.floor(16 + value * 184 + 0.5)
+	elseif name == "jumpPowerVal" then JumpVal = math.floor(50 + value * 250 + 0.5)
 	elseif name == "showTeamId" then ShowIDOn = value
 	elseif name == "aimPredStrength" then AimPredStrength = value * 3
 	end
